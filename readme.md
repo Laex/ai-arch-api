@@ -1,4 +1,4 @@
-# Лабораторные работы №1-4: MLOps пайплайн и асинхронный инференс
+# Лабораторные работы №1-5: MLOps пайплайн, асинхронный инференс и CI/CD
 
 Проект представляет собой архитектурный фундамент ИИ-системы (Классификатор документов), построенный на принципах **Clean Architecture**. 
 Реализован полный цикл MLOps в миниатюре:
@@ -6,6 +6,7 @@
 2. **ЛР №2**: Управление данными (Data-as-Code) через DVC и MinIO.
 3. **ЛР №3**: Обучение модели, конвертация в ONNX и реализация инференс-сервиса (Model-as-Code).
 4. **ЛР №4**: Асинхронная обработка задач с очередью (Celery + Redis) и полная контейнеризация (Docker Compose).
+5. **ЛР №5**: CI/CD пайплайн (GitHub Actions) и управление жизненным циклом модели (MLflow).
 
 ## Стек технологий
 * **Python 3.11+**
@@ -15,9 +16,10 @@
 * **Redis**: Брокер сообщений и хранилище результатов.
 * **ONNX Runtime**: Высокопроизводительный движок для запуска моделей.
 * **Scikit-learn**: Обучение ML-моделей.
-* **Docker & Docker Compose**: Оркестрация сервисов (API, Worker, Broker, Storage).
-* **DVC (Data Version Control)**: Управление версиями данных и моделей.
-* **Boto3**: Работа с S3-хранилищем.
+* **Docker & Docker Compose**: Оркестрация сервисов (API, Worker, Broker, MLflow).
+* **MLflow**: Трекинг экспериментов и реестр моделей (Model Registry).
+* **GitHub Actions**: Автоматизация CI/CD пайплайна (сборка, тестирование, публикация).
+* **Ruff**: Линтер для проверки качества кода.
 
 ## Структура проекта
 Проект организован в 4 слоя согласно Clean Architecture:
@@ -28,64 +30,66 @@
 
 2. **`src/application`** (Бизнес-логика)
    - `DocumentRoutingService`: сценарий классификации документов.
-   - `DataSyncService`: сценарий синхронизации данных и моделей с облаком.
 
 3. **`src/infrastructure`** (Реализация)
    - `ONNXDocumentClassifier`: адаптер для запуска ONNX-моделей.
-   - `S3Storage`: адаптер для работы с MinIO через `boto3`.
 
 4. **`src/presentation`** (Взаимодействие)
    - `api.py`: Асинхронный REST API (отправляет задачи в Celery).
    - `celery_app.py`: Конфигурация приложения Celery.
    - `tasks.py`: Определение фоновых задач (инференс модели).
+   - `dependencies.py`: Загрузка и кеширование моделей напрямую из MLflow Registry (ленивая загрузка).
 
 ## Утилиты (Scripts)
 В папке `scripts/` находятся вспомогательные скрипты для управления жизненным циклом проекта:
-* **`init_minio.py`**: Инициализация объектного хранилища. Создает бакеты `datasets` и `models`, загружает демо-данные для проверки синхронизации.
-* **`train_model.py`**: Пайплайн обучения. Загружает данные, обучает модель (TF-IDF + Logistic Regression), конвертирует её в формат ONNX и сохраняет в папку `models/`.
+* **`quality_gate.py`**: Скрипт проверки базовой метрики модели (Quality Gate). Останавливает CI/CD пайплайн, если точность (accuracy) ниже порога 0.90.
+* **`train_model.py`**: Пайплайн обучения. Обучает пайплайн, конвертирует в ONNX, логирует в **MLflow Model Registry** и автоматически назначает алиас `production`.
 
-## Развертывание и запуск
+## Инструкция по установке, настройке и запуску
 
-### 1. Подготовка окружения
+### Требования к окружению
+Перед началом работы убедитесь, что у вас установлены:
+* **Git**
+* **Python 3.11+**
+* **Poetry**
+* **Docker** и **Docker Compose**
+
+### 1. Клонирование репозитория
+   ```bash
+   git clone <ваш-url-репозитория>
+   cd <имя-папки-проекта>
+   ```
+
+### 2. Настройка (Конфигурация)
+   Параметры подключения можно переопределить через переменные окружения. При необходимости создайте файл `.env` в корне проекта (по умолчанию используются следующие значения):
+   ```env
+   MLFLOW_TRACKING_URI=http://localhost:5000
+   REDIS_URL=redis://localhost:6379/0
+   ```
+
+### 3. Установка локальных зависимостей
+   Установите зависимости с помощью Poetry для возможности запуска скриптов обучения, тестов и линтеров вне Docker:
    ```bash
    poetry install
    ```
 
-### 2. Запуск системы (Docker Compose)
-   Запуск полного стека: API, Worker, Redis, MinIO.
+### 4. Запуск системы (Docker Compose)
+   Запуск полного стека приложения (API, Worker, Redis, MLflow) в фоновом режиме:
    ```bash
    docker-compose up --build -d
    ```
-   * **API**: http://localhost:8000
-   Консоль управления: http://localhost:9001 (login: `minioadmin`, pass: `minioadmin`).
+   После запуска сервисы будут доступны по следующим адресам:
+   * **API (Swagger UI)**: http://localhost:8000/docs
+   * **MLflow UI**: http://localhost:5000
 
-### 3. Инициализация и обучение модели
-   Инициализация бакетов (`datasets`, `models`) и загрузка демо-данных:
-   ```bash
-   poetry run python scripts/init_minio.py
-   ```
-
-   Обучение модели (TF-IDF + Logistic Regression) и конвертация в ONNX:
+### 5. Обучение и регистрация модели
+   Выполните скрипт локального обучения. Модель обучится, сконвертируется в ONNX и автоматически отправится в реестр запущенного контейнера MLflow с алиасом `production`:
    ```bash
    poetry run python scripts/train_model.py
    ```
-   Скрипт создаст файл `models/classifier.onnx`.
+   *Примечание: При первом запросе API или Worker лениво (динамически) скачают нужную версию модели из MLflow.*
 
-### 4. Настройка DVC (Версионирование)
-   Настройка удаленного хранилища для моделей (если еще не настроено):
-   ```bash
-   # Добавляем remote для бакета models
-   poetry run dvc remote add -d models_storage s3://models
-   poetry run dvc remote modify models_storage endpointurl http://localhost:9000
-   poetry run dvc remote modify minio access_key_id minioadmin
-   poetry run dvc remote modify minio secret_access_key minioadmin
-   
-   # Версионируем модель
-   poetry run dvc add models/classifier.onnx
-   poetry run dvc push -r models_storage
-   ```
-
-### 5. Тестирование API
+### 6. Тестирование API
    
    **1. Отправка задачи (POST):**
    ```bash
@@ -111,9 +115,9 @@
    
    Документация Swagger: http://localhost:8000/docs
 
-## Конфигурация
-Параметры подключения можно переопределить через переменные окружения (или `.env` файл):
-* `MINIO_ENDPOINT` (default: http://localhost:9000)
-* `MINIO_ACCESS_KEY` (default: minioadmin)
-* `MINIO_SECRET_KEY` (default: minioadmin)
-* `MINIO_BUCKET` (default: datasets)
+## CI/CD Пайплайн
+При создании pull request или пуше в ветки `main` / `master` запускается пайплайн GitHub Actions (`.github/workflows/ci.yml`), который:
+1. Выполняет проверку кода линтером (`ruff`).
+2. Запускает Quality Gate (`scripts/quality_gate.py`) для проверки точности модели.
+3. Обучает модель и логирует её во временный сервер MLflow внутри runner'а.
+4. Собирает Docker-образы API и Worker, после чего публикует их в GitHub Container Registry (`ghcr.io`).

@@ -1,5 +1,4 @@
 import os
-import numpy as np
 import mlflow
 import mlflow.onnx
 from mlflow.tracking import MlflowClient

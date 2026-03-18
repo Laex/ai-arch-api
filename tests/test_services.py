@@ -4,7 +4,6 @@
 Здесь мы проверяем бизнес-логику изолированно от внешних зависимостей (баз данных, нейросетей).
 Для этого используются Mock-объекты, которые имитируют поведение реальных компонентов.
 """
-import pytest
 from unittest.mock import Mock
 from src.domain.entities import DocumentText, DocCategory
 from src.domain.interfaces import IDocumentClassifier

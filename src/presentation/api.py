@@ -5,14 +5,10 @@
 для внешних систем (веб-фронтенд, мобильные приложения, другие сервисы).
 Здесь происходит преобразование HTTP-запросов в вызовы бизнес-логики (Application Layer).
 """
-import os
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI
 from pydantic import BaseModel
-from src.infrastructure.storage import S3Storage
-from src.application.services import DocumentRoutingService, DataSyncService
-from src.domain.entities import DocCategory
-from src.presentation.dependencies import get_model, get_service
+from src.presentation.dependencies import get_model
 from src.presentation.tasks import predict_task
 from src.presentation.celery_app import celery_app
 
@@ -25,52 +21,15 @@ async def lifespan(app: FastAPI):
     1. При запуске приложения (до начала обработки запросов) - блок до yield.
     2. При остановке приложения - блок после yield.
     
-    Здесь мы используем это для предварительной загрузки данных из S3,
-    чтобы модель не ждала скачивания файлов при первом запросе.
+    Здесь мы используем это для предварительной загрузки модели в память,
+    чтобы она скачалась из MLflow до того, как придет первый пользовательский запрос.
     """
-    # --- 1. Startup: Настройка и синхронизация ---
-    # Считываем конфигурацию подключения к MinIO из переменных окружения.
-    # Это позволяет менять настройки без изменения кода (12 Factor App).
-    s3_config = {
-        "endpoint_url": os.getenv("MINIO_ENDPOINT", "http://localhost:9000"),
-        "access_key": os.getenv("MINIO_ACCESS_KEY", "minioadmin"),
-        "secret_key": os.getenv("MINIO_SECRET_KEY", "minioadmin"),
-        "bucket": os.getenv("MINIO_BUCKET", "datasets")
-    }
-    
-    print("[Startup] Инициализация хранилища и синхронизация данных...")
+    print("[Startup] Инициализация приложения...")
     try:
-        # Инициализируем инфраструктурный слой (S3Storage)
-        storage = S3Storage(**s3_config)
-        # Внедряем зависимость в сервис синхронизации
-        sync_service = DataSyncService(storage=storage)
-        
-        # Синхронизируем критически важные данные перед началом работы.
-        # Если файлов нет локально, сервер скачает их из MinIO.
-        sync_service.sync_dataset(
-            remote_path="demo/test_invoice.txt", 
-            local_path="data/docs/invoices/test_invoice.txt"
-        )
-        
-        # --- Синхронизация модели (ЛР №3) ---
-        # Создаем конфигурацию для бакета с моделями
-        model_s3_config = s3_config.copy()
-        model_s3_config["bucket"] = "models"
-        
-        model_storage = S3Storage(**model_s3_config)
-        model_sync = DataSyncService(storage=model_storage)
-        
-        model_sync.sync_dataset(
-            remote_path="classifier.onnx",
-            local_path="models/classifier.onnx"
-        )
-        
         # Предзагрузка модели в память, чтобы первый запрос не тормозил
         get_model()
     except Exception as e:
-        # Важно: мы ловим ошибку, чтобы сервер все равно запустился,
-        # даже если MinIO недоступен (Graceful Degradation).
-        print(f"[Startup Error] Ошибка синхронизации: {e}")
+        print(f"[Startup Error] Ошибка инициализации: {e}")
     
     yield
     # --- 2. Shutdown (Очистка ресурсов) ---
