@@ -4,7 +4,7 @@ name = "clean-arch-ai"
 version = "0.1.0"
 description = "AI System Skeleton based on Clean Architecture"
 authors = ["Student <student@example.com>"]
-readme = "README.md"
+readme = "readme.md"
 # Указываем, где находится исходный код (пакет src)
 packages = [{include = "src"}]
 
