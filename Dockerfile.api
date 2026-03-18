@@ -1,0 +1,40 @@
+# Используем официальный легкий образ Python 3.11 на базе Debian Slim
+# Это уменьшает размер финального образа и повышает безопасность
+FROM python:3.11-slim
+
+# Устанавливаем рабочую директорию внутри контейнера
+# Все последующие команды будут выполняться относительно этой папки
+WORKDIR /app
+
+# Установка системных зависимостей
+# curl - может понадобиться для healthcheck или скачивания файлов
+# rm -rf /var/lib/apt/lists/* - очистка кэша apt для уменьшения размера образа
+RUN apt-get update && apt-get install -y curl locales && \
+    echo "en_US.UTF-8 UTF-8" > /etc/locale.gen && \
+    locale-gen && \
+    rm -rf /var/lib/apt/lists/*
+
+# Настройка локали (критично для onnxruntime StringNormalizer)
+ENV LANG=en_US.UTF-8 LANGUAGE=en_US:en LC_ALL=en_US.UTF-8
+
+# Копируем файлы проекта из текущей директории хоста в рабочую директорию контейнера
+COPY . .
+
+# Установка Poetry и зависимостей проекта
+# 1. pip install poetry - ставим менеджер зависимостей
+# 2. poetry config virtualenvs.create false - отключаем создание виртуального окружения,
+#    так как в контейнере изоляция уже обеспечена самим Docker
+# 3. poetry install ... --only main - устанавливаем только основные зависимости (без dev),
+#    чтобы не тянуть лишние библиотеки (тесты, линтеры) в продакшн
+RUN pip install poetry && \
+    poetry config virtualenvs.create false && \
+    poetry install --no-interaction --no-ansi --only main --no-root
+
+# Информируем Docker, что контейнер будет слушать порт 8000
+EXPOSE 8000
+
+# Команда запуска приложения при старте контейнера
+# uvicorn - ASGI сервер
+# src.presentation.api:app - путь к объекту приложения FastAPI
+# --host 0.0.0.0 - слушаем все интерфейсы (важно для Docker)
+CMD ["uvicorn", "src.presentation.api:app", "--host", "0.0.0.0", "--port", "8000"]

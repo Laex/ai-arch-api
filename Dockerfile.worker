@@ -1,0 +1,30 @@
+# Используем тот же базовый образ, что и для API
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Установка системных зависимостей
+RUN apt-get update && apt-get install -y curl locales && \
+    echo "en_US.UTF-8 UTF-8" > /etc/locale.gen && \
+    locale-gen && \
+    rm -rf /var/lib/apt/lists/*
+
+# Настройка локали (критично для onnxruntime StringNormalizer)
+ENV LANG=en_US.UTF-8 LANGUAGE=en_US:en LC_ALL=en_US.UTF-8
+
+# Копируем файлы проекта
+COPY . .
+
+# Установка Poetry и зависимостей проекта
+# Используем те же настройки, что и в API
+RUN pip install poetry && \
+    poetry config virtualenvs.create false && \
+    poetry install --no-interaction --no-ansi --only main --no-root
+
+# Воркеру не нужно открывать порты (EXPOSE), так как он сам подключается к Redis
+
+# Команда запуска Celery Worker
+# -A src.presentation.celery_app:celery_app - путь к экземпляру приложения Celery
+# worker - режим запуска (обработчик задач)
+# --loglevel=info - уровень логирования
+CMD ["celery", "-A", "src.presentation.celery_app:celery_app", "worker", "--loglevel=info"]

@@ -1,0 +1,110 @@
+version: '3.8'
+
+services:
+  # 1. Сервис объектного хранилища (MinIO)
+  # Используется для хранения датасетов и моделей (S3-compatible)
+  minio:
+    image: minio/minio:latest
+    container_name: ai-arch-minio
+    ports:
+      - "9000:9000" # API порт (для boto3, DVC)
+      - "9001:9001" # Console порт (веб-интерфейс админки)
+    environment:
+      # Логин и пароль администратора (в продакшене лучше использовать .env файл)
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    # Запуск сервера с указанием папки данных и адреса консоли
+    command: server /data --console-address ":9001"
+    volumes:
+      # Монтируем именованный том для сохранения данных при перезапуске контейнера
+      - minio_storage:/data
+    networks:
+      - ai-network
+
+  # 2. Брокер сообщений (Redis)
+  # Используется как очередь задач для Celery и хранилище результатов
+  broker:
+    image: redis:7-alpine
+    container_name: ai-arch-redis
+    ports:
+      - "6379:6379" # Стандартный порт Redis
+    networks:
+      - ai-network
+
+  # 3. API Сервис (FastAPI)
+  # Веб-сервер, принимающий запросы от клиентов и создающий задачи
+  api:
+    build:
+      context: .              # Контекст сборки - текущая папка
+      dockerfile: Dockerfile.api # Имя Dockerfile для API
+    container_name: ai-arch-api
+    ports:
+      - "8000:8000" # Пробрасываем порт приложения на хост
+    environment:
+      # Адрес Redis внутри сети Docker (имя сервиса 'broker')
+      - REDIS_URL=redis://broker:6379/0
+      # Настройки подключения к MinIO (внутри сети Docker имя сервиса 'minio')
+      - MINIO_ENDPOINT=http://minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
+      - MINIO_BUCKET=datasets
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+    depends_on:
+      # Ждем запуска брокера и хранилища перед стартом API
+      - broker
+      - minio
+      - mlflow
+    networks:
+      - ai-network
+
+  # 4. Worker Сервис (Celery)
+  # Фоновый процесс, выполняющий тяжелые задачи (инференс модели)
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker # Имя Dockerfile для воркера
+    container_name: ai-arch-worker
+    environment:
+      # Те же настройки окружения, что и у API, так как воркер тоже работает с Redis и MinIO
+      - REDIS_URL=redis://broker:6379/0
+      - MINIO_ENDPOINT=http://minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
+      - MINIO_BUCKET=datasets
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+    depends_on:
+      # Воркер зависит от брокера (очередь) и API (код задач)
+      - broker
+      - minio
+      - api
+      - mlflow
+    networks:
+      - ai-network
+
+  # 5. MLflow Tracking Server
+  # Сервис для логирования экспериментов, моделей и артефактов
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.11.3
+    container_name: ai-arch-mlflow
+    ports:
+      - "5000:5000" # Веб-интерфейс MLflow
+    volumes:
+      # Локальная папка для хранения артефактов (моделей, графиков)
+      - ./mlflow_artifacts:/mlflow/artifacts
+      # Именованный том для хранения базы данных экспериментов
+    command: >
+      mlflow server --host 0.0.0.0 --port 5000
+      --backend-store-uri file:///mlflow/mlflow.db
+      --artifacts-destination /mlflow/artifacts
+      --serve-artifacts
+    networks:
+      - ai-network
+
+volumes:
+  # Объявляем том для персистентного хранения данных MinIO
+  minio_storage:
+
+networks:
+  # Объявляем общую сеть для взаимодействия контейнеров по именам сервисов
+  ai-network:
+    driver: bridge
