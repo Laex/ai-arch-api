@@ -52,7 +52,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Start MLflow server for testing
-        run: docker-compose up -d mlflow
+        run: docker compose up -d mlflow
 
       - name: Set up Python and Poetry
         uses: actions/setup-python@v5
